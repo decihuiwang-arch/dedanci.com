@@ -9,7 +9,8 @@ import {
   analyzeWord,
   generateExamples,
   analyzeErrors,
-  generateMemoryTip
+  generateMemoryTip,
+  generateExamQuestion
 } from '../services/qwen.js'
 
 const router = express.Router()
@@ -139,6 +140,26 @@ router.post('/analyze-errors', async (req, res) => {
     }
 
     const result = await analyzeErrors(errorWords, userData)
+    res.json(result)
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+/**
+ * 生成真题风格选择题
+ * GET /api/ai/exam-question/:word
+ */
+router.get('/exam-question/:word', async (req, res) => {
+  try {
+    const { word } = req.params
+    const { level = 'cet6' } = req.query
+
+    if (!isQwenConfigured()) {
+      return res.status(400).json({ success: false, error: 'AI 服务未配置' })
+    }
+
+    const result = await generateExamQuestion(word, level)
     res.json(result)
   } catch (error) {
     res.status(500).json({ success: false, error: error.message })

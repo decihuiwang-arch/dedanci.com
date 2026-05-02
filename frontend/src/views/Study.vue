@@ -60,38 +60,6 @@
             </div>
             <div class="word">{{ currentCard.word }}</div>
             <div class="phonetic">{{ currentCard.phonetic }}</div>
-
-            <!-- 发音评分区域 -->
-            <div class="pronunciation-section" @click.stop>
-              <button
-                class="pronounce-btn"
-                :class="{ recording: isRecording }"
-                @mousedown="startRecording"
-                @mouseup="stopRecording"
-                @mouseleave="stopRecording"
-                @touchstart.prevent="startRecording"
-                @touchend.prevent="stopRecording"
-              >
-                <el-icon :size="28"><Microphone /></el-icon>
-                <span>{{ isRecording ? '录音中...' : '按住发音' }}</span>
-              </button>
-
-              <!-- 评分结果 -->
-              <div v-if="pronunciationScore !== null" class="score-result">
-                <div class="score-circle" :class="getScoreClass(pronunciationScore)">
-                  <span class="score-number">{{ pronunciationScore }}</span>
-                  <span class="score-label">分</span>
-                </div>
-                <div class="score-feedback">
-                  <p class="feedback-text">{{ pronunciationFeedback }}</p>
-                  <p class="heard-text" v-if="heardWord">
-                    <span class="label">听到：</span>
-                    <span class="heard">{{ heardWord }}</span>
-                  </p>
-                </div>
-              </div>
-            </div>
-
             <div class="hint">点击卡片或按<span class="key-hint">空格</span>查看释义</div>
           </div>
 
@@ -115,6 +83,15 @@
               <div class="label">中文释义</div>
               <div class="meaning">{{ currentCard.meaning }}</div>
             </div>
+
+            <!-- 考试标签 -->
+            <div class="exam-tags" v-if="currentCard.difficulty || currentCard.tags">
+              <el-tag v-if="currentCard.difficulty && currentCard.difficulty >= 7" size="small" type="danger">高频</el-tag>
+              <el-tag v-if="currentCard.difficulty && currentCard.difficulty >= 4 && currentCard.difficulty < 7" size="small" type="warning">中频</el-tag>
+              <el-tag v-if="currentCard.difficulty && currentCard.difficulty < 4" size="small" type="info">低频</el-tag>
+              <el-tag v-if="currentCard.tags" size="small" type="success" v-for="tag in currentCard.tags.split(',')" :key="tag">{{ tag }}</el-tag>
+            </div>
+
             <div class="example" v-if="currentCard.example">
               <p class="example-en">
                 {{ currentCard.example }}
@@ -126,6 +103,59 @@
               <div class="ai-btn" @click.stop="showAIAnalysis">
                 <el-icon><MagicStick /></el-icon> AI 解析
               </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 口语练习区（翻牌后显示） -->
+        <div v-if="currentCard && isFlipped" class="speech-practice" @click.stop>
+          <div class="speech-header">
+            <el-icon :size="18"><Microphone /></el-icon>
+            <span>口语练习</span>
+            <span class="speech-subtitle">听标准发音 → 跟读 → AI 评分</span>
+          </div>
+          <div class="speech-row">
+            <button class="speech-btn listen" @click.stop="speakWord" title="听标准发音">
+              <el-icon :size="20"><Headset /></el-icon>
+              <span>听发音</span>
+            </button>
+            <button
+              class="speech-btn record"
+              :class="{ recording: isRecording }"
+              @mousedown="startRecording"
+              @mouseup="stopRecording"
+              @mouseleave="stopRecording"
+              @touchstart.prevent="startRecording"
+              @touchend.prevent="stopRecording"
+              title="按住说话录音"
+            >
+              <el-icon :size="20"><Microphone /></el-icon>
+              <span>{{ isRecording ? '录音中...' : '跟读' }}</span>
+            </button>
+          </div>
+
+          <!-- 评分结果 -->
+          <div v-if="pronunciationScore !== null" class="speech-result">
+            <div class="score-ring" :class="getScoreClass(pronunciationScore)">
+              <svg viewBox="0 0 100 100" class="ring-svg">
+                <circle cx="50" cy="50" r="42" class="ring-bg" />
+                <circle cx="50" cy="50" r="42" class="ring-fill"
+                  :style="{ strokeDashoffset: 264 - (pronunciationScore / 100) * 264 }" />
+              </svg>
+              <div class="ring-text">
+                <span class="score-num">{{ pronunciationScore }}</span>
+                <span class="score-unit">分</span>
+              </div>
+            </div>
+            <div class="speech-feedback">
+              <p class="feedback-txt">{{ pronunciationFeedback }}</p>
+              <p class="heard-txt" v-if="heardWord">
+                <span class="label">识别到：</span>
+                <span class="heard">{{ heardWord }}</span>
+              </p>
+              <button v-if="pronunciationScore < 80" class="retry-btn" @click.stop="retryRecording">
+                <el-icon><Refresh /></el-icon> 再练一次
+              </button>
             </div>
           </div>
         </div>
@@ -183,6 +213,34 @@
           <h4>词根词缀</h4>
           <p>{{ aiData.root }}</p>
         </div>
+        <!-- AI 真题练习 -->
+        <div class="ai-section" v-if="aiExamQuestion && !aiLoading">
+          <h4>📝 真题练习</h4>
+          <div class="exam-question">
+            <p class="question-text">{{ aiExamQuestion.question }}</p>
+            <div class="question-options" v-if="aiExamQuestion.options">
+              <div
+                v-for="(opt, i) in aiExamQuestion.options"
+                :key="i"
+                class="option-item"
+                :class="{
+                  selected: selectedOption === i,
+                  correct: answered && i === aiExamQuestion.answer,
+                  wrong: answered && selectedOption === i && i !== aiExamQuestion.answer
+                }"
+                @click="selectOption(i)"
+              >
+                <span class="option-letter">{{ 'ABCD'[i] }}</span>
+                <span class="option-text">{{ opt }}</span>
+              </div>
+            </div>
+            <div v-if="answered" class="question-explanation">
+              <p><strong>解析：</strong>{{ aiExamQuestion.explanation }}</p>
+            </div>
+            <el-button v-if="!answered && aiExamQuestion.options" type="primary" size="small" @click="checkAnswer">确认答案</el-button>
+            <el-button v-if="answered" size="small" @click="loadExamQuestion">换一题</el-button>
+          </div>
+        </div>
         <div class="ai-section" v-if="aiData.memoryTip">
           <h4>记忆技巧</h4>
           <p class="memory-tip">{{ aiData.memoryTip }}</p>
@@ -207,7 +265,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElNotification } from 'element-plus'
 import axios from 'axios'
 
 const route = useRoute()
@@ -230,6 +288,9 @@ const stats = ref({ new: 0, review: 0, total: 0 })
 const showAIDialog = ref(false)
 const aiLoading = ref(false)
 const aiData = ref(null)
+const aiExamQuestion = ref(null)
+const selectedOption = ref(-1)
+const answered = ref(false)
 
 const currentCard = computed(() => cards.value[currentIndex.value])
 const total = computed(() => cards.value.length)
@@ -346,10 +407,46 @@ const showAIAnalysis = async () => {
     if (res.data.success) {
       aiData.value = res.data.data
     }
+    // 同时加载真题
+    loadExamQuestion()
   } catch (error) {
     ElMessage.error('AI 解析失败')
   } finally {
     aiLoading.value = false
+  }
+}
+
+// 加载 AI 真题
+const loadExamQuestion = async () => {
+  if (!currentCard.value) return
+  aiExamQuestion.value = null
+  selectedOption.value = -1
+  answered.value = false
+
+  try {
+    const res = await axios.get(`/api/ai/exam-question/${currentCard.value.word}`, {
+      params: { level: currentCard.value.tags || 'cet6' }
+    })
+    if (res.data.success) {
+      aiExamQuestion.value = res.data.data
+    }
+  } catch (e) {
+    // 静默失败，不阻塞主功能
+    console.warn('加载真题失败:', e)
+  }
+}
+
+const selectOption = (index) => {
+  selectedOption.value = index
+}
+
+const checkAnswer = () => {
+  if (selectedOption.value === -1) return ElMessage.warning('请先选择一个选项')
+  answered.value = true
+  if (selectedOption.value === aiExamQuestion.value.answer) {
+    ElNotification({ title: '✅ 回答正确', message: '', type: 'success', duration: 2000 })
+  } else {
+    ElNotification({ title: '❌ 答错了', message: aiExamQuestion.value.explanation, type: 'error', duration: 4000 })
   }
 }
 
@@ -610,6 +707,16 @@ const getScoreClass = (score) => {
   return 'needs-work'
 }
 
+// 重试录音发音
+const retryRecording = async () => {
+  pronunciationScore.value = null
+  heardWord.value = ''
+  pronunciationFeedback.value = ''
+  // 延迟一下让状态重置
+  await new Promise(r => setTimeout(r, 100))
+  startRecording()
+}
+
 // 朗读 AI 解析内容
 const speakAIContent = () => {
   if (!aiData.value) return
@@ -675,6 +782,206 @@ const handleKeydown = (e) => {
   gap: 30px;
   max-width: 1400px;
   margin: 0 auto;
+}
+
+/* 考试标签 */
+.exam-tags {
+  margin-top: 12px;
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* 口语练习区 */
+.speech-practice {
+  width: 500px;
+  background: white;
+  border-radius: 16px;
+  padding: 24px;
+  margin-top: 20px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  text-align: center;
+}
+
+.speech-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 20px;
+  color: #333;
+  font-weight: 600;
+  font-size: 16px;
+}
+
+.speech-subtitle {
+  font-size: 12px;
+  color: #999;
+  font-weight: normal;
+}
+
+.speech-row {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+}
+
+.speech-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 28px;
+  border: none;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.25s;
+}
+
+.speech-btn.listen {
+  background: #e6f7ff;
+  color: #1890ff;
+}
+
+.speech-btn.listen:hover {
+  background: #bae7ff;
+  transform: translateY(-1px);
+}
+
+.speech-btn.record {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+}
+
+.speech-btn.record:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4);
+}
+
+.speech-btn.record.recording {
+  background: linear-gradient(135deg, #ff4d4f 0%, #ff7875 100%);
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+
+/* 评分结果 */
+.speech-result {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  margin-top: 24px;
+  padding: 20px;
+  background: #f9f9ff;
+  border-radius: 12px;
+}
+
+.score-ring {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  flex-shrink: 0;
+}
+
+.ring-svg {
+  width: 80px;
+  height: 80px;
+  transform: rotate(-90deg);
+}
+
+.ring-bg {
+  fill: none;
+  stroke: #e8e8e8;
+  stroke-width: 8;
+}
+
+.ring-fill {
+  fill: none;
+  stroke-width: 8;
+  stroke-linecap: round;
+  stroke-dasharray: 264;
+  stroke-dashoffset: 0;
+  transition: stroke-dashoffset 0.8s ease;
+}
+
+.score-ring.excellent .ring-fill { stroke: #52c41a; }
+.score-ring.good .ring-fill { stroke: #1890ff; }
+.score-ring.fair .ring-fill { stroke: #faad14; }
+.score-ring.needs-work .ring-fill { stroke: #ff4d4f; }
+
+.ring-text {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+}
+
+.score-num {
+  display: block;
+  font-size: 22px;
+  font-weight: bold;
+  color: #333;
+  line-height: 1;
+}
+
+.score-unit {
+  font-size: 11px;
+  color: #999;
+}
+
+.speech-feedback {
+  flex: 1;
+  text-align: left;
+}
+
+.feedback-txt {
+  font-size: 15px;
+  color: #333;
+  font-weight: 500;
+  margin: 0;
+}
+
+.heard-txt {
+  font-size: 13px;
+  color: #666;
+  margin: 4px 0 0;
+}
+
+.heard-txt .label { color: #999; }
+.heard-txt .heard { color: #1890ff; font-weight: 500; }
+
+.retry-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 10px;
+  padding: 6px 16px;
+  background: white;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  color: #666;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.retry-btn:hover {
+  border-color: #1890ff;
+  color: #1890ff;
+}
+
+/* 卡片背面滚动 */
+.card-back {
+  overflow-y: auto;
+  justify-content: flex-start !important;
+  padding-top: 24px !important;
 }
 
 .sidebar {
@@ -1040,6 +1347,103 @@ const handleKeydown = (e) => {
   padding: 12px;
   border-radius: 8px;
   border-left: 3px solid #faad14;
+}
+
+/* 真题练习样式 */
+.exam-question {
+  background: #f5f7fa;
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.question-text {
+  font-size: 15px;
+  color: #333;
+  line-height: 1.7;
+  margin: 0 0 16px;
+}
+
+.question-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.option-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: white;
+  border: 2px solid #e8e8e8;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.option-item:hover {
+  border-color: #1890ff;
+  background: #f0f8ff;
+}
+
+.option-item.selected {
+  border-color: #1890ff;
+  background: #e6f7ff;
+}
+
+.option-item.correct {
+  border-color: #52c41a;
+  background: #f6ffed;
+}
+
+.option-item.wrong {
+  border-color: #ff4d4f;
+  background: #fff2f0;
+}
+
+.option-letter {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #f0f0f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: bold;
+  color: #666;
+  flex-shrink: 0;
+}
+
+.option-item.selected .option-letter {
+  background: #1890ff;
+  color: white;
+}
+
+.option-item.correct .option-letter {
+  background: #52c41a;
+  color: white;
+}
+
+.option-item.wrong .option-letter {
+  background: #ff4d4f;
+  color: white;
+}
+
+.option-text {
+  font-size: 14px;
+  color: #333;
+}
+
+.question-explanation {
+  margin-top: 16px;
+  padding: 12px;
+  background: #fffbe6;
+  border: 1px solid #ffe58f;
+  border-radius: 8px;
+  font-size: 14px;
+  color: #666;
+  line-height: 1.6;
 }
 
 /* 朗读按钮样式 */

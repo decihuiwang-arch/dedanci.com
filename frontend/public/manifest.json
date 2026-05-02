@@ -1,0 +1,19 @@
+{
+  "name": "得单词者得天下",
+  "short_name": "dedanci",
+  "description": "基于 FSRS 算法 + AI 智能解析的背单词系统",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#667eea",
+  "theme_color": "#667eea",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["education", "productivity"],
+  "lang": "zh-CN"
+}

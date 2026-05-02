@@ -337,11 +337,60 @@ JSON 格式输出：
   }
 }
 
+/**
+ * 生成真题风格选择题
+ * @param {string} word - 单词
+ * @param {string} level - 考试等级
+ */
+export async function generateExamQuestion(word, level = 'cet6') {
+  const levelMap = {
+    'cet4': '四级', 'cet6': '六级', 'kaoyan': '考研',
+    'ielts': '雅思', 'toefl': '托福', 'k12': '中学', 'gre': 'GRE'
+  }
+
+  const systemPrompt = `你是一位${levelMap[level] || '英语'}考试命题专家，擅长编写高质量的词汇选择题。`
+
+  const userPrompt = `请为单词 "${word}" 创作一道${levelMap[level]}考试风格的词汇选择题。
+
+要求：
+1. 题干需包含该单词
+2. 4个选项，A为正确答案，BCD为干扰项
+3. 干扰项需有迷惑性
+4. 附简要解析
+
+JSON 格式输出：
+{
+  "question": "题干（包含目标单词的句子或语境）",
+  "options": ["A选项", "B选项", "C选项", "D选项"],
+  "answer": 0,
+  "explanation": "解析说明",
+  "source": "模拟题"
+}`
+
+  const result = await chatCompletion([
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userPrompt }
+  ], { maxTokens: 1024 })
+
+  if (!result.success) return result
+
+  try {
+    let jsonContent = result.content
+    if (jsonContent.includes('```')) {
+      jsonContent = jsonContent.match(/```(?:json)?\s*([\s\S]*?)```/)?.[1] || jsonContent
+    }
+    return { success: true, data: JSON.parse(jsonContent.trim()) }
+  } catch {
+    return { success: false, error: '解析AI响应失败' }
+  }
+}
+
 export default {
   isQwenConfigured,
   analyzeWord,
   generateExamples,
   analyzeErrors,
   extractWords,
-  generateMemoryTip
+  generateMemoryTip,
+  generateExamQuestion
 }
