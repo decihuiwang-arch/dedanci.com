@@ -29,7 +29,7 @@ function queryAll(db, sql, params = []) {
 router.get('/', (req, res) => {
   try {
     const db = getDatabase()
-    const userId = req.headers['x-user-id'] || 1
+    const userId = req.userId || 1
 
     const errors = queryAll(db, `
       SELECT
@@ -62,7 +62,7 @@ router.get('/', (req, res) => {
 router.delete('/:wordId', (req, res) => {
   try {
     const db = getDatabase()
-    const userId = req.headers['x-user-id'] || 1
+    const userId = req.userId || 1
     const { wordId } = req.params
 
     db.run('DELETE FROM error_book WHERE user_id = ? AND word_id = ?', [userId, wordId])

@@ -49,7 +49,10 @@
           <el-icon :size="64" color="#c0c4cc"><CircleCheck /></el-icon>
           <h2>今日任务已完成！</h2>
           <p>太棒了，明天继续加油！</p>
-          <el-button type="primary" @click="loadTodayCards">继续学习</el-button>
+          <div class="empty-actions">
+            <el-button type="primary" @click="loadTodayCards">继续学习</el-button>
+            <ShareCard />
+          </div>
         </div>
 
         <div v-else class="flashcard" :class="{ flipped: isFlipped }" @click="flipCard">
@@ -99,9 +102,24 @@
               </p>
               <p class="example-cn">{{ currentCard.example_translation }}</p>
             </div>
+            <!-- 互动模拟入口 -->
+            <div class="sim-entry" v-if="currentCard.phet_sim_id" @click.stop="openSim">
+              <div class="sim-entry-inner">
+                <span class="sim-icon">🔬</span>
+                <div class="sim-text">
+                  <div class="sim-label">互动小实验</div>
+                  <div class="sim-desc">{{ currentCard.phet_context }}</div>
+                </div>
+                <span class="sim-arrow">→</span>
+              </div>
+            </div>
+
             <div class="card-actions">
               <div class="ai-btn" @click.stop="showAIAnalysis">
                 <el-icon><MagicStick /></el-icon> AI 解析
+              </div>
+              <div class="star-btn" @click.stop="toggleStar" :class="{ starred: currentCard.is_starred }">
+                <el-icon><Star /></el-icon> {{ currentCard.is_starred ? '已收藏' : '收藏' }}
               </div>
             </div>
           </div>
@@ -186,6 +204,14 @@
       </section>
     </div>
 
+    <!-- 互动模拟弹窗 -->
+    <SimModal
+      v-model="showSimDialog"
+      :sim-id="currentCard?.phet_sim_id || ''"
+      :sim-title="simTitle"
+      :sim-context="currentCard?.phet_context || ''"
+    />
+
     <!-- AI 解析弹窗 -->
     <el-dialog v-model="showAIDialog" width="600px">
       <template #header>
@@ -260,6 +286,7 @@
       </div>
     </el-dialog>
   </AppLayout>
+  <AIAssistant :currentWord="currentCard" />
 </template>
 
 <script setup>
@@ -267,8 +294,13 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElNotification } from 'element-plus'
 import axios from 'axios'
+import SimModal from '../components/SimModal.vue'
+import ShareCard from '../components/ShareCard.vue'
+import AIAssistant from '../components/AIAssistant.vue'
+import { useAuth } from '../stores/auth'
 
 const route = useRoute()
+// axios 拦截器已自动附加 token
 
 const loading = ref(true)
 const cards = ref([])
@@ -291,6 +323,8 @@ const aiData = ref(null)
 const aiExamQuestion = ref(null)
 const selectedOption = ref(-1)
 const answered = ref(false)
+const showSimDialog = ref(false)
+const simTitle = ref('')
 
 const currentCard = computed(() => cards.value[currentIndex.value])
 const total = computed(() => cards.value.length)
@@ -311,9 +345,7 @@ const loadTodayCards = async () => {
     if (vocabId) {
       url += `?vocabId=${vocabId}`
     }
-    const res = await axios.get(url, {
-      headers: { 'x-user-id': '1' }
-    })
+    const res = await axios.get(url)
     if (res.data.success) {
       cards.value = res.data.data.cards
       stats.value = res.data.data.stats
@@ -354,8 +386,6 @@ const loadPreview = async () => {
   try {
     const res = await axios.post('/api/study/preview', {
       wordId: currentCard.value.word_id
-    }, {
-      headers: { 'x-user-id': '1' }
     })
     if (res.data.success) {
       preview.value = res.data.data
@@ -373,8 +403,6 @@ const rate = async (rating) => {
     await axios.post('/api/study/review', {
       wordId: currentCard.value.word_id,
       rating
-    }, {
-      headers: { 'x-user-id': '1' }
     })
 
     studied.value++
@@ -603,47 +631,77 @@ const speakExample = () => {
   speak(currentCard.value.example, 'en-US')
 }
 
-// ===== 发音评分功能（通过后端代理调用 4060Ti Whisper）=====
+// ===== 发音评分功能（前端 PCM 直录 + 后端多引擎评分）=====
 
-let mediaRecorder = null
-let audioChunks = []
+let audioContext = null
+let scriptProcessor = null
+let sourceNode = null
+let mediaStream = null
+let pcmChunks = []
 
-// 开始录音
+/** 重采样到 16kHz（线性插值） */
+function resampleTo16kHz(float32Array, sourceSampleRate) {
+  if (sourceSampleRate === 16000) return float32Array
+  const ratio = 16000 / sourceSampleRate
+  const newLength = Math.round(float32Array.length * ratio)
+  const result = new Float32Array(newLength)
+  for (let i = 0; i < newLength; i++) {
+    const srcIdx = i / ratio
+    const lo = Math.floor(srcIdx)
+    const hi = Math.min(lo + 1, float32Array.length - 1)
+    const frac = srcIdx - lo
+    result[i] = float32Array[lo] * (1 - frac) + float32Array[hi] * frac
+  }
+  return result
+}
+
+/** Float32 [-1,1] → Int16 [-32768, 32767] */
+function float32ToInt16(float32Array) {
+  const int16 = new Int16Array(float32Array.length)
+  for (let i = 0; i < float32Array.length; i++) {
+    const s = Math.max(-1, Math.min(1, float32Array[i]))
+    int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF
+  }
+  return int16
+}
+
+// 开始录音（PCM 16kHz 16bit mono 直出）
 const startRecording = async () => {
   if (!currentCard.value) return
 
   pronunciationScore.value = null
   heardWord.value = ''
   pronunciationFeedback.value = ''
-  audioChunks = []
+  pcmChunks = []
 
   try {
-    // 获取麦克风权限
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-
-    // 创建录音器
-    mediaRecorder = new MediaRecorder(stream)
-
-    mediaRecorder.ondataavailable = (event) => {
-      if (event.data.size > 0) {
-        audioChunks.push(event.data)
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        sampleRate: 16000,
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true
       }
+    })
+
+    // 创建 AudioContext（优先 16kHz，不支持则后续重采样）
+    const AudioCtx = window.AudioContext || window.webkitAudioContext
+    audioContext = new AudioCtx({ sampleRate: 16000 })
+    sourceNode = audioContext.createMediaStreamSource(mediaStream)
+
+    // ScriptProcessorNode 采集原始 PCM
+    scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1)
+    scriptProcessor.onaudioprocess = (e) => {
+      const float32 = e.inputBuffer.getChannelData(0)
+      const resampled = resampleTo16kHz(float32, audioContext.sampleRate)
+      pcmChunks.push(float32ToInt16(resampled))
     }
 
-    mediaRecorder.onstop = async () => {
-      // 停止所有音轨
-      stream.getTracks().forEach(track => track.stop())
+    sourceNode.connect(scriptProcessor)
+    scriptProcessor.connect(audioContext.destination)
 
-      // 合并音频数据
-      const audioBlob = new Blob(audioChunks, { type: 'audio/webm' })
-
-      // 发送到后端代理
-      await sendToScoreService(audioBlob)
-    }
-
-    mediaRecorder.start()
     isRecording.value = true
-    console.log('开始录音...')
+    console.log('开始录音(PCM 16kHz)...')
   } catch (e) {
     console.error('启动录音失败:', e)
     if (e.name === 'NotAllowedError') {
@@ -656,24 +714,37 @@ const startRecording = async () => {
 
 // 停止录音
 const stopRecording = () => {
-  if (mediaRecorder && isRecording.value) {
-    mediaRecorder.stop()
+  if (scriptProcessor && isRecording.value) {
+    sourceNode.disconnect()
+    scriptProcessor.disconnect()
+    audioContext.close()
+    mediaStream.getTracks().forEach(t => t.stop())
+
     isRecording.value = false
     console.log('录音结束，正在评分...')
+
+    // 合并 PCM chunks → 单一 Int16Array
+    const totalLength = pcmChunks.reduce((acc, c) => acc + c.length, 0)
+    const merged = new Int16Array(totalLength)
+    let offset = 0
+    for (const chunk of pcmChunks) {
+      merged.set(chunk, offset)
+      offset += chunk.length
+    }
+
+    sendToScoreService(merged.buffer)
   }
 }
 
-// 发送到后端代理（再转发到 4060Ti）
-const sendToScoreService = async (audioBlob) => {
+// 发送到后端评分接口（PCM 二进制直传，无需后端转码）
+const sendToScoreService = async (pcmArrayBuffer) => {
   if (!currentCard.value) return
 
   try {
     const response = await fetch(`/api/pronunciation/score?word=${encodeURIComponent(currentCard.value.word)}`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'audio/webm'
-      },
-      body: audioBlob
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: pcmArrayBuffer
     })
 
     if (!response.ok) {
@@ -686,7 +757,10 @@ const sendToScoreService = async (audioBlob) => {
       pronunciationScore.value = result.score
       pronunciationFeedback.value = result.feedback
       heardWord.value = result.recognized_word || result.recognized_text
-      console.log(`评分完成: ${result.score}分, 识别: ${result.recognized_text}`)
+      if (result.fallback) {
+        console.warn(`评分引擎降级: ${result.fallbackFrom} → ${result.engine}`)
+      }
+      console.log(`评分完成: ${result.score}分, 引擎: ${result.engine}, 识别: ${result.recognized_text}`)
     } else {
       pronunciationScore.value = 0
       pronunciationFeedback.value = result.error || '评分失败，请重试'
@@ -715,6 +789,32 @@ const retryRecording = async () => {
   // 延迟一下让状态重置
   await new Promise(r => setTimeout(r, 100))
   startRecording()
+}
+
+// 打开互动模拟
+const openSim = () => {
+  if (!currentCard.value?.phet_sim_id) return
+  const sim = typeof SIM_REGISTRY !== 'undefined' ? SIM_REGISTRY[currentCard.value.phet_sim_id] : null
+  simTitle.value = sim ? sim.title : currentCard.value.phet_sim_id
+  showSimDialog.value = true
+}
+
+// 收藏/取消收藏单词
+const toggleStar = async () => {
+  if (!currentCard.value) return
+  try {
+    if (currentCard.value.is_starred) {
+      await axios.delete('/api/vocabularies/star/' + currentCard.value.word_id)
+      currentCard.value.is_starred = 0
+      ElMessage.success('已从生词本移除')
+    } else {
+      await axios.post('/api/vocabularies/star', { wordId: currentCard.value.word_id })
+      currentCard.value.is_starred = 1
+      ElMessage.success('已加入生词本')
+    }
+  } catch (e) {
+    ElMessage.error('操作失败')
+  }
 }
 
 // 朗读 AI 解析内容
@@ -1076,6 +1176,12 @@ const handleKeydown = (e) => {
   opacity: 0.8;
 }
 
+.empty-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
 .flashcard {
   width: 500px;
   height: 320px;
@@ -1248,6 +1354,21 @@ const handleKeydown = (e) => {
   gap: 4px;
   font-size: 14px;
 }
+
+.star-btn {
+  position: absolute;
+  bottom: 20px;
+  left: 20px;
+  color: #999;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 14px;
+  transition: color 0.2s;
+}
+.star-btn:hover { color: #faad14; }
+.star-btn.starred { color: #faad14; }
 
 .rating-buttons {
   display: flex;
@@ -1500,6 +1621,58 @@ const handleKeydown = (e) => {
   gap: 16px;
 }
 
+/* 互动模拟入口 */
+.sim-entry {
+  margin-top: 16px;
+  cursor: pointer;
+}
+
+.sim-entry-inner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, #eef2ff, #f5f3ff);
+  border: 1px solid #e0e7ff;
+  border-radius: 12px;
+  transition: all 0.2s;
+}
+
+.sim-entry-inner:hover {
+  background: linear-gradient(135deg, #e0e7ff, #ede9fe);
+  border-color: #c7d2fe;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.15);
+}
+
+.sim-icon {
+  font-size: 24px;
+  flex-shrink: 0;
+}
+
+.sim-text {
+  flex: 1;
+  text-align: left;
+}
+
+.sim-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #4f46e5;
+}
+
+.sim-desc {
+  font-size: 11px;
+  color: #7c3aed;
+  margin-top: 2px;
+}
+
+.sim-arrow {
+  font-size: 16px;
+  color: #6366f1;
+  font-weight: bold;
+}
+
 /* 发音评分样式 */
 .pronunciation-section {
   margin-top: 24px;
@@ -1611,5 +1784,123 @@ const handleKeydown = (e) => {
 .heard-text .heard {
   color: #1890ff;
   font-weight: 500;
+}
+
+/* === 移动端响应式 === */
+@media (max-width: 768px) {
+  .study-content {
+    flex-direction: column;
+    padding: 16px;
+    gap: 16px;
+  }
+
+  .sidebar {
+    width: 100%;
+    flex-direction: row;
+    gap: 12px;
+    overflow-x: auto;
+  }
+
+  .stats-card,
+  .progress-card,
+  .streak-card {
+    min-width: 140px;
+    flex-shrink: 0;
+  }
+
+  .stats-card h3,
+  .progress-card h3 {
+    font-size: 12px;
+    margin-bottom: 8px;
+  }
+
+  .stat-value {
+    font-size: 20px;
+  }
+
+  .streak-value {
+    font-size: 22px;
+  }
+
+  .flashcard {
+    width: 100%;
+    max-width: 400px;
+    height: 280px;
+  }
+
+  .card-front .word {
+    font-size: 36px;
+  }
+
+  .card-back .word {
+    font-size: 26px;
+  }
+
+  .speech-practice {
+    width: 100%;
+    max-width: 400px;
+    padding: 16px;
+  }
+
+  .speech-btn {
+    padding: 10px 20px;
+    font-size: 14px;
+  }
+
+  .rating-buttons {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .rating-btn {
+    padding: 10px 16px;
+  }
+
+  .rating-btn .label {
+    font-size: 13px;
+  }
+
+  .rating-btn .interval {
+    font-size: 11px;
+  }
+}
+
+@media (max-width: 480px) {
+  .study-content {
+    padding: 12px 8px;
+  }
+
+  .flashcard {
+    height: 260px;
+  }
+
+  .card-front .word {
+    font-size: 30px;
+  }
+
+  .phonetic {
+    font-size: 15px;
+  }
+
+  .hint {
+    font-size: 12px;
+  }
+
+  .speech-row {
+    gap: 10px;
+  }
+
+  .speech-btn {
+    padding: 8px 16px;
+    font-size: 13px;
+  }
+
+  .rating-buttons {
+    gap: 8px;
+  }
+
+  .rating-btn {
+    padding: 8px 14px;
+  }
 }
 </style>

@@ -73,9 +73,24 @@ export async function initDatabase() {
       difficulty INTEGER DEFAULT 5,
       frequency INTEGER DEFAULT 0,
       tags TEXT,
+      category TEXT DEFAULT '',
+      english_meaning TEXT DEFAULT '',
+      phet_sim_id TEXT DEFAULT '',
+      phet_context TEXT DEFAULT '',
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )
   `)
+
+  // 兼容旧数据库：如果缺少新字段则自动添加
+  const alterStatements = [
+    `ALTER TABLE words ADD COLUMN category TEXT DEFAULT ''`,
+    `ALTER TABLE words ADD COLUMN english_meaning TEXT DEFAULT ''`,
+    `ALTER TABLE words ADD COLUMN phet_sim_id TEXT DEFAULT ''`,
+    `ALTER TABLE words ADD COLUMN phet_context TEXT DEFAULT ''`
+  ]
+  for (const sql of alterStatements) {
+    try { db.run(sql) } catch (e) { /* 字段已存在则忽略 */ }
+  }
 
   db.run(`
     CREATE TABLE IF NOT EXISTS vocabulary_words (
@@ -151,6 +166,22 @@ export async function initDatabase() {
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE,
       UNIQUE(word_id, cache_type)
+    )
+  `)
+
+  // 成就表
+  db.run(`
+    CREATE TABLE IF NOT EXISTS achievements (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      achievement_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      icon TEXT NOT NULL,
+      description TEXT,
+      exp_reward INTEGER DEFAULT 0,
+      unlocked_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      UNIQUE(user_id, achievement_id)
     )
   `)
 

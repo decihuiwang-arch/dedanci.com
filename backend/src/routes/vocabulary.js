@@ -202,4 +202,99 @@ router.post('/:id/words', (req, res) => {
   }
 })
 
+/**
+ * 搜索单词
+ * GET /api/vocabularies/search?q=ephemeral
+ */
+router.get('/search', (req, res) => {
+  try {
+    const db = getDatabase()
+    const q = (req.query.q || '').trim()
+    if (!q) return res.json({ success: true, data: [] })
+
+    const results = queryAll(db, `
+      SELECT id, word, phonetic, pos, meaning, english_meaning, category, difficulty, tags,
+             example, example_translation
+      FROM words
+      WHERE word LIKE ? OR meaning LIKE ?
+      ORDER BY
+        CASE WHEN word = ? THEN 0
+             WHEN word LIKE ? THEN 1
+             ELSE 2 END,
+        difficulty DESC
+      LIMIT 20
+    `, [q + '%', '%' + q + '%', q, q + '%'])
+
+    res.json({ success: true, data: results })
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+/**
+ * 生词本 - 添加
+ * POST /api/vocabularies/star
+ */
+router.post('/star', (req, res) => {
+  try {
+    const db = getDatabase()
+    const userId = req.userId || 1
+    const { wordId } = req.body
+
+    if (!wordId) {
+      return res.status(400).json({ success: false, error: '缺少单词ID' })
+    }
+
+    db.run('UPDATE user_cards SET is_starred = 1 WHERE user_id = ? AND word_id = ?', [userId, wordId])
+    saveDatabase()
+
+    res.json({ success: true, message: '已加入生词本' })
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+/**
+ * 生词本 - 移除
+ * DELETE /api/vocabularies/star/:wordId
+ */
+router.delete('/star/:wordId', (req, res) => {
+  try {
+    const db = getDatabase()
+    const userId = req.userId || 1
+    const { wordId } = req.params
+
+    db.run('UPDATE user_cards SET is_starred = 0 WHERE user_id = ? AND word_id = ?', [userId, wordId])
+    saveDatabase()
+
+    res.json({ success: true, message: '已从生词本移除' })
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+/**
+ * 生词本 - 列表
+ * GET /api/vocabularies/starred
+ */
+router.get('/starred', (req, res) => {
+  try {
+    const db = getDatabase()
+    const userId = req.userId || 1
+
+    const words = queryAll(db, `
+      SELECT uc.word_id as id, w.word, w.phonetic, w.pos, w.meaning, w.english_meaning,
+             w.category, w.difficulty, w.tags, uc.reps, uc.lapses, uc.state
+      FROM user_cards uc
+      JOIN words w ON uc.word_id = w.id
+      WHERE uc.user_id = ? AND uc.is_starred = 1
+      ORDER BY w.word
+    `, [userId])
+
+    res.json({ success: true, data: words })
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
 export default router

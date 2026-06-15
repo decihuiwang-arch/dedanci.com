@@ -73,8 +73,10 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import axios from 'axios'
+import { useAuth } from '../stores/auth'
 
 const router = useRouter()
+// axios 拦截器已自动附加 token
 
 const errorWords = ref([])
 const analyzing = ref(false)
@@ -82,9 +84,7 @@ const analysisResult = ref(null)
 
 const loadErrorWords = async () => {
   try {
-    const res = await axios.get('/api/error-book', {
-      headers: { 'x-user-id': '1' }
-    })
+    const res = await axios.get('/api/error-book')
     if (res.data.success) {
       errorWords.value = res.data.data
     }

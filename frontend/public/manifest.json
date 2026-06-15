@@ -1,10 +1,12 @@
 {
-  "name": "得单词者得天下",
-  "short_name": "dedanci",
-  "description": "基于 FSRS 算法 + AI 智能解析的背单词系统",
+  "name": "得单词者得天下 - dedanci.com",
+  "short_name": "得单词",
+  "description": "AI驱动科学记忆 - FSRS算法 + AI智能解析 + 互动仿真实验 + 口语评分",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#667eea",
+  "orientation": "portrait-primary",
+  "background_color": "#0a0a1a",
   "theme_color": "#667eea",
   "icons": [
     {
@@ -15,5 +17,21 @@
     }
   ],
   "categories": ["education", "productivity"],
-  "lang": "zh-CN"
+  "lang": "zh-CN",
+  "dir": "ltr",
+  "prefer_related_applications": false,
+  "shortcuts": [
+    {
+      "name": "开始背单词",
+      "short_name": "背单词",
+      "url": "/study",
+      "icons": [{"src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml"}]
+    },
+    {
+      "name": "词库管理",
+      "short_name": "词库",
+      "url": "/vocabularies",
+      "icons": [{"src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml"}]
+    }
+  ]
 }
